@@ -38,14 +38,6 @@ var (
 	supportedFeatures = sets.NewString("layering")
 )
 
-var (
-	supportedFeatures = sets.NewString("layering")
-)
-
-var (
-	supportedFeatures = sets.NewString("layering")
-)
-
 // This is the primary entrypoint for volume plugins.
 func ProbeVolumePlugins() []volume.VolumePlugin {
 	return []volume.VolumePlugin{&rbdPlugin{nil, exec.New()}}
