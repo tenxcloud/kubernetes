@@ -35,7 +35,7 @@ import (
 )
 
 var (
-	supportedFeatures = sets.NewString("layering")
+	supportedFeatures = sets.NewString("layering", "1")
 )
 
 // This is the primary entrypoint for volume plugins.
