@@ -34,7 +34,7 @@ const (
 	DefaultCACertPath         = "/etc/kubernetes/pki/ca.crt"
 	DefaultCertificatesDir    = "/etc/kubernetes/pki"
 	DefaultEtcdDataDir        = "/var/lib/etcd"
-	DefaultImageRepository    = "gcr.io/google_containers"
+	DefaultImageRepository    = "index.tenxcloud.com/google_containers"
 )
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
