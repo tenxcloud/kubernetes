@@ -129,7 +129,7 @@ const (
 	V18NodeBootstrapTokenAuthGroup = "system:bootstrappers:kubeadm:default-node-token"
 
 	// DefaultCIImageRepository points to image registry where CI uploads images from ci-cross build job
-	DefaultCIImageRepository = "gcr.io/kubernetes-ci-images"
+	DefaultCIImageRepository = "index.tenxcloud.com/kubernetes-ci-images"
 )
 
 var (
