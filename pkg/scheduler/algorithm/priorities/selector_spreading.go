@@ -23,7 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/kubernetes/pkg/scheduler/algorithm"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/api"
-	"k8s.io/kubernetes/pkg/scheduler/schedulercache"
+	schedulercache "k8s.io/kubernetes/pkg/scheduler/cache"
 	utilnode "k8s.io/kubernetes/pkg/util/node"
 
 	"github.com/golang/glog"
@@ -97,15 +97,11 @@ func (s *SelectorSpread) CalculateSpreadPriorityMap(pod *v1.Pod, meta interface{
 			glog.V(4).Infof("skipping pending-deleted pod: %s/%s", nodePod.Namespace, nodePod.Name)
 			continue
 		}
-		matches := false
 		for _, selector := range selectors {
 			if selector.Matches(labels.Set(nodePod.ObjectMeta.Labels)) {
-				matches = true
+				count++
 				break
 			}
-		}
-		if matches {
-			count++
 		}
 	}
 	return schedulerapi.HostPriority{

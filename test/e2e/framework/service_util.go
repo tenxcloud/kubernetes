@@ -47,7 +47,6 @@ import (
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
-	scaleclient "k8s.io/client-go/scale"
 )
 
 const (
@@ -255,7 +254,7 @@ func (j *ServiceTestJig) CreateOnlyLocalNodePortService(namespace, serviceName s
 	svc := j.CreateTCPServiceOrFail(namespace, func(svc *v1.Service) {
 		svc.Spec.Type = v1.ServiceTypeNodePort
 		svc.Spec.ExternalTrafficPolicy = v1.ServiceExternalTrafficPolicyTypeLocal
-		svc.Spec.Ports = []v1.ServicePort{{Protocol: "TCP", Port: 80}}
+		svc.Spec.Ports = []v1.ServicePort{{Protocol: v1.ProtocolTCP, Port: 80}}
 	})
 
 	if createPod {
@@ -1261,8 +1260,8 @@ func StartServeHostnameService(c clientset.Interface, internalClient internalcli
 	return podNames, serviceIP, nil
 }
 
-func StopServeHostnameService(clientset clientset.Interface, internalClientset internalclientset.Interface, scaleClient scaleclient.ScalesGetter, ns, name string) error {
-	if err := DeleteRCAndPods(clientset, internalClientset, scaleClient, ns, name); err != nil {
+func StopServeHostnameService(clientset clientset.Interface, ns, name string) error {
+	if err := DeleteRCAndWaitForGC(clientset, ns, name); err != nil {
 		return err
 	}
 	if err := clientset.CoreV1().Services(ns).Delete(name, nil); err != nil {
@@ -1415,7 +1414,7 @@ func CreateServiceSpec(serviceName, externalName string, isHeadless bool, select
 		headlessService.Spec.ExternalName = externalName
 	} else {
 		headlessService.Spec.Ports = []v1.ServicePort{
-			{Port: 80, Name: "http", Protocol: "TCP"},
+			{Port: 80, Name: "http", Protocol: v1.ProtocolTCP},
 		}
 	}
 	if isHeadless {

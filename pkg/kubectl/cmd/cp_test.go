@@ -33,8 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/rest/fake"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
 	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 	"k8s.io/kubernetes/pkg/kubectl/scheme"
 )
@@ -70,8 +70,17 @@ func TestExtractFileSpec(t *testing.T) {
 			expectedFile: "/some/file",
 		},
 		{
-			spec:      "some:bad:spec",
+			spec:      ":file:not:exist:in:local:filesystem",
 			expectErr: true,
+		},
+		{
+			spec:      "namespace/pod/invalid:/some/file",
+			expectErr: true,
+		},
+		{
+			spec:         "pod:/some/filenamewith:in",
+			expectedPod:  "pod",
+			expectedFile: "/some/filenamewith:in",
 		},
 	}
 	for _, test := range tests {
@@ -509,10 +518,9 @@ func TestClean(t *testing.T) {
 }
 
 func TestCopyToPod(t *testing.T) {
-	tf := cmdtesting.NewTestFactory()
-	tf.Namespace = "test"
-	ns := legacyscheme.Codecs
-	codec := legacyscheme.Codecs.LegacyCodec(scheme.Versions...)
+	tf := cmdtesting.NewTestFactory().WithNamespace("test")
+	ns := scheme.Codecs
+	codec := scheme.Codecs.LegacyCodec(scheme.Scheme.PrioritizedVersionsAllGroups()...)
 
 	tf.Client = &fake.RESTClient{
 		GroupVersion:         schema.GroupVersion{Group: "", Version: "v1"},
@@ -524,9 +532,9 @@ func TestCopyToPod(t *testing.T) {
 	}
 
 	tf.ClientConfigVal = defaultClientConfig()
-	buf := bytes.NewBuffer([]byte{})
-	errBuf := bytes.NewBuffer([]byte{})
-	cmd := NewCmdCp(tf, buf, errBuf)
+	ioStreams, _, _, _ := genericclioptions.NewTestIOStreams()
+
+	cmd := NewCmdCp(tf, ioStreams)
 
 	srcFile, err := ioutil.TempDir("", "test")
 	if err != nil {
@@ -554,6 +562,7 @@ func TestCopyToPod(t *testing.T) {
 	}
 
 	for name, test := range tests {
+		opts := NewCopyOptions(ioStreams)
 		src := fileSpec{
 			File: srcFile,
 		}
@@ -562,8 +571,9 @@ func TestCopyToPod(t *testing.T) {
 			PodName:      "pod-name",
 			File:         test.dest,
 		}
+		opts.Complete(tf, cmd)
 		t.Run(name, func(t *testing.T) {
-			err = copyToPod(tf, cmd, buf, errBuf, src, dest)
+			err = opts.copyToPod(src, dest)
 			//If error is NotFound error , it indicates that the
 			//request has been sent correctly.
 			//Treat this as no error.
@@ -572,6 +582,38 @@ func TestCopyToPod(t *testing.T) {
 			}
 			if !test.expectedErr && !errors.IsNotFound(err) {
 				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		expectedErr bool
+	}{
+		{
+			name:        "Validate Succeed",
+			args:        []string{"1", "2"},
+			expectedErr: false,
+		},
+		{
+			name:        "Validate Fail",
+			args:        []string{"1", "2", "3"},
+			expectedErr: true,
+		},
+	}
+	tf := cmdtesting.NewTestFactory()
+	ioStreams, _, _, _ := genericclioptions.NewTestIOStreams()
+	opts := NewCopyOptions(ioStreams)
+	cmd := NewCmdCp(tf, ioStreams)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := opts.Validate(cmd, test.args)
+			if (err != nil) != test.expectedErr {
+				t.Errorf("expected error: %v, saw: %v, error: %v", test.expectedErr, err != nil, err)
 			}
 		})
 	}

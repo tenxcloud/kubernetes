@@ -30,6 +30,7 @@ import (
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2beta1"
 	"k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta/testrestmapper"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -221,7 +222,8 @@ func (tc *legacyTestCase) prepareTestClient(t *testing.T) (*fake.Clientset, *sca
 			podName := fmt.Sprintf("%s-%d", podNamePrefix, i)
 			pod := v1.Pod{
 				Status: v1.PodStatus{
-					Phase: v1.PodRunning,
+					StartTime: &metav1.Time{Time: time.Now().Add(-3 * time.Minute)},
+					Phase:     v1.PodRunning,
 					Conditions: []v1.PodCondition{
 						{
 							Type:   v1.PodReady,
@@ -483,25 +485,19 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 		return true, obj, nil
 	})
 
-	replicaCalc := &ReplicaCalculator{
-		metricsClient: metricsClient,
-		podsGetter:    testClient.Core(),
-		tolerance:     defaultTestingTolerance,
-	}
+	replicaCalc := NewReplicaCalculator(metricsClient, testClient.Core(), defaultTestingTolerance, defaultTestingCpuInitializationPeriod, defaultTestingDelayOfInitialReadinessStatus)
 
 	informerFactory := informers.NewSharedInformerFactory(testClient, controller.NoResyncPeriodFunc())
-	defaultUpscaleForbiddenWindow := 3 * time.Minute
 	defaultDownscaleForbiddenWindow := 5 * time.Minute
 
 	hpaController := NewHorizontalController(
 		eventClient.Core(),
 		testScaleClient,
 		testClient.Autoscaling(),
-		legacyscheme.Registry.RESTMapper(),
+		testrestmapper.TestOnlyStaticRESTMapper(legacyscheme.Scheme),
 		replicaCalc,
 		informerFactory.Autoscaling().V1().HorizontalPodAutoscalers(),
 		controller.NoResyncPeriodFunc(),
-		defaultUpscaleForbiddenWindow,
 		defaultDownscaleForbiddenWindow,
 	)
 	hpaController.hpaListerSynced = alwaysReady
@@ -524,7 +520,7 @@ func (tc *legacyTestCase) runTest(t *testing.T) {
 	tc.verifyResults(t)
 }
 
-func LegacyTestScaleUp(t *testing.T) {
+func TestLegacyScaleUp(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:         2,
 		maxReplicas:         6,
@@ -539,15 +535,14 @@ func LegacyTestScaleUp(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpUnreadyLessScale(t *testing.T) {
+func TestLegacyScaleUpUnreadyLessScale(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:          2,
 		maxReplicas:          6,
 		initialReplicas:      3,
 		desiredReplicas:      4,
 		CPUTarget:            30,
-		CPUCurrent:           60,
-		verifyCPUCurrent:     true,
+		verifyCPUCurrent:     false,
 		reportedLevels:       []uint64{300, 500, 700},
 		reportedCPURequests:  []resource.Quantity{resource.MustParse("1.0"), resource.MustParse("1.0"), resource.MustParse("1.0")},
 		reportedPodReadiness: []v1.ConditionStatus{v1.ConditionFalse, v1.ConditionTrue, v1.ConditionTrue},
@@ -556,7 +551,7 @@ func LegacyTestScaleUpUnreadyLessScale(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpUnreadyNoScale(t *testing.T) {
+func TestLegacyScaleUpUnreadyNoScale(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:          2,
 		maxReplicas:          6,
@@ -573,7 +568,7 @@ func LegacyTestScaleUpUnreadyNoScale(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpDeployment(t *testing.T) {
+func TestLegacyScaleUpDeployment(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:         2,
 		maxReplicas:         6,
@@ -593,7 +588,7 @@ func LegacyTestScaleUpDeployment(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpReplicaSet(t *testing.T) {
+func TestLegacyScaleUpReplicaSet(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:         2,
 		maxReplicas:         6,
@@ -613,7 +608,7 @@ func LegacyTestScaleUpReplicaSet(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpCM(t *testing.T) {
+func TestLegacyScaleUpCM(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:     2,
 		maxReplicas:     6,
@@ -635,12 +630,12 @@ func LegacyTestScaleUpCM(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpCMUnreadyLessScale(t *testing.T) {
+func TestLegacyScaleUpCMUnreadyNoLessScale(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:     2,
 		maxReplicas:     6,
 		initialReplicas: 3,
-		desiredReplicas: 4,
+		desiredReplicas: 6,
 		CPUTarget:       0,
 		metricsTarget: []autoscalingv2.MetricSpec{
 			{
@@ -658,12 +653,12 @@ func LegacyTestScaleUpCMUnreadyLessScale(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpCMUnreadyNoScaleWouldScaleDown(t *testing.T) {
+func TestLegacyScaleUpCMUnreadyNoScaleWouldScaleDown(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:     2,
 		maxReplicas:     6,
 		initialReplicas: 3,
-		desiredReplicas: 3,
+		desiredReplicas: 6,
 		CPUTarget:       0,
 		metricsTarget: []autoscalingv2.MetricSpec{
 			{
@@ -681,7 +676,7 @@ func LegacyTestScaleUpCMUnreadyNoScaleWouldScaleDown(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleDown(t *testing.T) {
+func TestLegacyScaleDown(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:         2,
 		maxReplicas:         6,
@@ -696,7 +691,7 @@ func LegacyTestScaleDown(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleDownCM(t *testing.T) {
+func TestLegacyScaleDownCM(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:     2,
 		maxReplicas:     6,
@@ -718,7 +713,7 @@ func LegacyTestScaleDownCM(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleDownIgnoresUnreadyPods(t *testing.T) {
+func TestLegacyScaleDownIgnoresUnreadyPods(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:          2,
 		maxReplicas:          6,
@@ -840,7 +835,7 @@ func LegacyTestMaxReplicas(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestSuperfluousMetrics(t *testing.T) {
+func TestLegacySuperfluousMetrics(t *testing.T) {
 	tc := legacyTestCase{
 		minReplicas:         2,
 		maxReplicas:         6,
@@ -1022,7 +1017,7 @@ func LegacyTestComputedToleranceAlgImplementation(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleUpRCImmediately(t *testing.T) {
+func TestLegacyScaleUpRCImmediately(t *testing.T) {
 	time := metav1.Time{Time: time.Now()}
 	tc := legacyTestCase{
 		minReplicas:         2,
@@ -1038,7 +1033,7 @@ func LegacyTestScaleUpRCImmediately(t *testing.T) {
 	tc.runTest(t)
 }
 
-func LegacyTestScaleDownRCImmediately(t *testing.T) {
+func TestLegacyScaleDownRCImmediately(t *testing.T) {
 	time := metav1.Time{Time: time.Now()}
 	tc := legacyTestCase{
 		minReplicas:         2,

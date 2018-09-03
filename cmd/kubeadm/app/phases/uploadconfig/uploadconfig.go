@@ -17,43 +17,95 @@ limitations under the License.
 package uploadconfig
 
 import (
-	"github.com/ghodss/yaml"
-	"github.com/golang/glog"
+	"fmt"
 
 	"k8s.io/api/core/v1"
+	rbac "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmapiext "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha1"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/apiclient"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	configutil "k8s.io/kubernetes/cmd/kubeadm/app/util/config"
+	rbachelper "k8s.io/kubernetes/pkg/apis/rbac/v1"
 )
 
-// UploadConfiguration saves the MasterConfiguration used for later reference (when upgrading for instance)
-func UploadConfiguration(cfg *kubeadmapi.MasterConfiguration, client clientset.Interface) error {
+const (
+	// NodesKubeadmConfigClusterRoleName sets the name for the ClusterRole that allows
+	// the bootstrap tokens to access the kubeadm-config ConfigMap during the node bootstrap/discovery
+	// or during upgrade nodes
+	NodesKubeadmConfigClusterRoleName = "kubeadm:nodes-kubeadm-config"
+)
 
-	glog.Infof("[uploadconfig] storing the configuration used in ConfigMap %q in the %q Namespace\n", kubeadmconstants.MasterConfigurationConfigMap, metav1.NamespaceSystem)
+// UploadConfiguration saves the InitConfiguration used for later reference (when upgrading for instance)
+func UploadConfiguration(cfg *kubeadmapi.InitConfiguration, client clientset.Interface) error {
 
-	// Convert cfg to the external version as that's the only version of the API that can be deserialized later
-	externalcfg := &kubeadmapiext.MasterConfiguration{}
-	legacyscheme.Scheme.Convert(cfg, externalcfg, nil)
+	fmt.Printf("[uploadconfig] storing the configuration used in ConfigMap %q in the %q Namespace\n", kubeadmconstants.InitConfigurationConfigMap, metav1.NamespaceSystem)
 
-	// Removes sensitive info from the data that will be stored in the config map
-	externalcfg.Token = ""
+	// We don't want to mutate the cfg itself, so create a copy of it using .DeepCopy of it first
+	clusterConfigToUpload := cfg.ClusterConfiguration.DeepCopy()
+	// TODO: Reset the .ComponentConfig struct like this:
+	// cfgToUpload.ComponentConfigs = kubeadmapi.ComponentConfigs{}
+	// in order to not upload any other components' config to the kubeadm-config
+	// ConfigMap. The components store their config in their own ConfigMaps.
+	// Before this line can be uncommented util/config.loadConfigurationBytes()
+	// needs to support reading the different components' ConfigMaps first.
 
-	cfgYaml, err := yaml.Marshal(*externalcfg)
+	// Marshal the object into YAML
+	cfgYaml, err := configutil.MarshalKubeadmConfigObject(clusterConfigToUpload)
 	if err != nil {
 		return err
 	}
 
-	return apiclient.CreateOrUpdateConfigMap(client, &v1.ConfigMap{
+	err = apiclient.CreateOrUpdateConfigMap(client, &v1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      kubeadmconstants.MasterConfigurationConfigMap,
+			Name:      kubeadmconstants.InitConfigurationConfigMap,
 			Namespace: metav1.NamespaceSystem,
 		},
 		Data: map[string]string{
-			kubeadmconstants.MasterConfigurationConfigMapKey: string(cfgYaml),
+			kubeadmconstants.InitConfigurationConfigMapKey: string(cfgYaml),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	// Ensure that the NodesKubeadmConfigClusterRoleName exists
+	err = apiclient.CreateOrUpdateRole(client, &rbac.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      NodesKubeadmConfigClusterRoleName,
+			Namespace: metav1.NamespaceSystem,
+		},
+		Rules: []rbac.PolicyRule{
+			rbachelper.NewRule("get").Groups("").Resources("configmaps").Names(kubeadmconstants.InitConfigurationConfigMap).RuleOrDie(),
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	// Binds the NodesKubeadmConfigClusterRoleName to all the bootstrap tokens
+	// that are members of the system:bootstrappers:kubeadm:default-node-token group
+	// and to all nodes
+	return apiclient.CreateOrUpdateRoleBinding(client, &rbac.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      NodesKubeadmConfigClusterRoleName,
+			Namespace: metav1.NamespaceSystem,
+		},
+		RoleRef: rbac.RoleRef{
+			APIGroup: rbac.GroupName,
+			Kind:     "Role",
+			Name:     NodesKubeadmConfigClusterRoleName,
+		},
+		Subjects: []rbac.Subject{
+			{
+				Kind: rbac.GroupKind,
+				Name: kubeadmconstants.NodeBootstrapTokenAuthGroup,
+			},
+			{
+				Kind: rbac.GroupKind,
+				Name: kubeadmconstants.NodesGroup,
+			},
 		},
 	})
 }

@@ -17,6 +17,7 @@ limitations under the License.
 package uploadconfig
 
 import (
+	"reflect"
 	"testing"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,9 +26,10 @@ import (
 	clientsetfake "k8s.io/client-go/kubernetes/fake"
 	core "k8s.io/client-go/testing"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
-	kubeadmapiext "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha1"
+	kubeadmscheme "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/scheme"
+	kubeadmapiv1alpha3 "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm/v1alpha3"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
+	configutil "k8s.io/kubernetes/cmd/kubeadm/app/util/config"
 )
 
 func TestUploadConfiguration(t *testing.T) {
@@ -61,11 +63,32 @@ func TestUploadConfiguration(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &kubeadmapi.MasterConfiguration{
-				KubernetesVersion: "1.7.3",
-				Token:             "1234567",
+		t.Run(tt.name, func(t2 *testing.T) {
+			initialcfg := &kubeadmapiv1alpha3.InitConfiguration{
+				APIEndpoint: kubeadmapiv1alpha3.APIEndpoint{
+					AdvertiseAddress: "1.2.3.4",
+				},
+				ClusterConfiguration: kubeadmapiv1alpha3.ClusterConfiguration{
+					KubernetesVersion: "v1.10.10",
+				},
+				BootstrapTokens: []kubeadmapiv1alpha3.BootstrapToken{
+					{
+						Token: &kubeadmapiv1alpha3.BootstrapTokenString{
+							ID:     "abcdef",
+							Secret: "abcdef0123456789",
+						},
+					},
+				},
+				NodeRegistration: kubeadmapiv1alpha3.NodeRegistrationOptions{
+					Name:      "node-foo",
+					CRISocket: "/var/run/custom-cri.sock",
+				},
 			}
+			cfg, err := configutil.ConfigFileAndDefaultsToInternalConfig("", initialcfg)
+			if err != nil {
+				t2.Fatalf("UploadConfiguration() error = %v", err)
+			}
+
 			client := clientsetfake.NewSimpleClientset()
 			if tt.errOnCreate != nil {
 				client.PrependReactor("create", "configmaps", func(action core.Action) (bool, runtime.Object, error) {
@@ -74,7 +97,7 @@ func TestUploadConfiguration(t *testing.T) {
 			}
 			// For idempotent test, we check the result of the second call.
 			if err := UploadConfiguration(cfg, client); !tt.updateExisting && (err != nil) != tt.errExpected {
-				t.Errorf("UploadConfiguration() error = %v, wantErr %v", err, tt.errExpected)
+				t2.Fatalf("UploadConfiguration() error = %v, wantErr %v", err, tt.errExpected)
 			}
 			if tt.updateExisting {
 				if tt.errOnUpdate != nil {
@@ -83,35 +106,26 @@ func TestUploadConfiguration(t *testing.T) {
 					})
 				}
 				if err := UploadConfiguration(cfg, client); (err != nil) != tt.errExpected {
-					t.Errorf("UploadConfiguration() error = %v", err)
+					t2.Fatalf("UploadConfiguration() error = %v", err)
 				}
 			}
 			if tt.verifyResult {
-				masterCfg, err := client.CoreV1().ConfigMaps(metav1.NamespaceSystem).Get(kubeadmconstants.MasterConfigurationConfigMap, metav1.GetOptions{})
+				masterCfg, err := client.CoreV1().ConfigMaps(metav1.NamespaceSystem).Get(kubeadmconstants.InitConfigurationConfigMap, metav1.GetOptions{})
 				if err != nil {
-					t.Errorf("Fail to query ConfigMap error = %v", err)
+					t2.Fatalf("Fail to query ConfigMap error = %v", err)
 				}
-				configData := masterCfg.Data[kubeadmconstants.MasterConfigurationConfigMapKey]
+				configData := masterCfg.Data[kubeadmconstants.InitConfigurationConfigMapKey]
 				if configData == "" {
-					t.Errorf("Fail to find ConfigMap key")
+					t2.Fatalf("Fail to find ConfigMap key")
 				}
 
-				decodedExtCfg := &kubeadmapiext.MasterConfiguration{}
-				decodedCfg := &kubeadmapi.MasterConfiguration{}
-
-				if err := runtime.DecodeInto(legacyscheme.Codecs.UniversalDecoder(), []byte(configData), decodedExtCfg); err != nil {
-					t.Errorf("unable to decode config from bytes: %v", err)
-				}
-				// Default and convert to the internal version
-				legacyscheme.Scheme.Default(decodedExtCfg)
-				legacyscheme.Scheme.Convert(decodedExtCfg, decodedCfg, nil)
-
-				if decodedCfg.KubernetesVersion != cfg.KubernetesVersion {
-					t.Errorf("Decoded value doesn't match, decoded = %#v, expected = %#v", decodedCfg.KubernetesVersion, cfg.KubernetesVersion)
+				decodedCfg := &kubeadmapi.ClusterConfiguration{}
+				if err := runtime.DecodeInto(kubeadmscheme.Codecs.UniversalDecoder(), []byte(configData), decodedCfg); err != nil {
+					t2.Fatalf("unable to decode config from bytes: %v", err)
 				}
 
-				if decodedCfg.Token != "" {
-					t.Errorf("Decoded value contains token (sensitive info), decoded = %#v, expected = empty", decodedCfg.Token)
+				if !reflect.DeepEqual(decodedCfg, &cfg.ClusterConfiguration) {
+					t2.Errorf("the initial and decoded ClusterConfiguration didn't match")
 				}
 			}
 		})

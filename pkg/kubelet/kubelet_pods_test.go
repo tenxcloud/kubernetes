@@ -17,7 +17,6 @@ limitations under the License.
 package kubelet
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -38,9 +37,9 @@ import (
 	core "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
 	// TODO: remove this import if
-	// api.Registry.GroupOrDie(v1.GroupName).GroupVersion.String() is changed
+	// api.Registry.GroupOrDie(v1.GroupName).GroupVersions[0].String() is changed
 	// to "v1"?
-	"k8s.io/kubernetes/pkg/api/legacyscheme"
+
 	_ "k8s.io/kubernetes/pkg/apis/core/install"
 	runtimeapi "k8s.io/kubernetes/pkg/kubelet/apis/cri/runtime/v1alpha2"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
@@ -55,6 +54,7 @@ func TestMakeMounts(t *testing.T) {
 	bTrue := true
 	propagationHostToContainer := v1.MountPropagationHostToContainer
 	propagationBidirectional := v1.MountPropagationBidirectional
+	propagationNone := v1.MountPropagationNone
 
 	testCases := map[string]struct {
 		container      v1.Container
@@ -79,9 +79,10 @@ func TestMakeMounts(t *testing.T) {
 						MountPropagation: &propagationHostToContainer,
 					},
 					{
-						MountPath: "/mnt/path3",
-						Name:      "disk",
-						ReadOnly:  true,
+						MountPath:        "/mnt/path3",
+						Name:             "disk",
+						ReadOnly:         true,
+						MountPropagation: &propagationNone,
 					},
 					{
 						MountPath: "/mnt/path4",
@@ -110,7 +111,7 @@ func TestMakeMounts(t *testing.T) {
 					HostPath:       "/mnt/disk",
 					ReadOnly:       true,
 					SELinuxRelabel: false,
-					Propagation:    runtimeapi.MountPropagation_PROPAGATION_HOST_TO_CONTAINER,
+					Propagation:    runtimeapi.MountPropagation_PROPAGATION_PRIVATE,
 				},
 				{
 					Name:           "disk4",
@@ -118,7 +119,7 @@ func TestMakeMounts(t *testing.T) {
 					HostPath:       "/mnt/host",
 					ReadOnly:       false,
 					SELinuxRelabel: false,
-					Propagation:    runtimeapi.MountPropagation_PROPAGATION_HOST_TO_CONTAINER,
+					Propagation:    runtimeapi.MountPropagation_PROPAGATION_PRIVATE,
 				},
 				{
 					Name:           "disk5",
@@ -126,7 +127,7 @@ func TestMakeMounts(t *testing.T) {
 					HostPath:       "/var/lib/kubelet/podID/volumes/empty/disk5",
 					ReadOnly:       false,
 					SELinuxRelabel: false,
-					Propagation:    runtimeapi.MountPropagation_PROPAGATION_HOST_TO_CONTAINER,
+					Propagation:    runtimeapi.MountPropagation_PROPAGATION_PRIVATE,
 				},
 			},
 			expectErr: false,
@@ -185,7 +186,7 @@ func TestMakeMounts(t *testing.T) {
 					HostPath:       "/mnt/host",
 					ReadOnly:       false,
 					SELinuxRelabel: false,
-					Propagation:    runtimeapi.MountPropagation_PROPAGATION_HOST_TO_CONTAINER,
+					Propagation:    runtimeapi.MountPropagation_PROPAGATION_PRIVATE,
 				},
 			},
 			expectErr: false,
@@ -271,7 +272,7 @@ func TestMakeMounts(t *testing.T) {
 				return
 			}
 
-			mounts, _, err := makeMounts(&pod, "/pod", &tc.container, "fakepodname", "", "", tc.podVolumes, fm)
+			mounts, _, err := makeMounts(&pod, "/pod", &tc.container, "fakepodname", "", "", tc.podVolumes, fm, nil)
 
 			// validate only the error if we expect an error
 			if tc.expectErr {
@@ -294,7 +295,7 @@ func TestMakeMounts(t *testing.T) {
 				t.Errorf("Failed to enable feature gate for MountPropagation: %v", err)
 				return
 			}
-			mounts, _, err = makeMounts(&pod, "/pod", &tc.container, "fakepodname", "", "", tc.podVolumes, fm)
+			mounts, _, err = makeMounts(&pod, "/pod", &tc.container, "fakepodname", "", "", tc.podVolumes, fm, nil)
 			if !tc.expectErr {
 				expectedPrivateMounts := []kubecontainer.Mount{}
 				for _, mount := range tc.expectedMounts {
@@ -355,7 +356,7 @@ func TestDisabledSubpath(t *testing.T) {
 	defer utilfeature.DefaultFeatureGate.Set("VolumeSubpath=true")
 
 	for name, test := range cases {
-		_, _, err := makeMounts(&pod, "/pod", &test.container, "fakepodname", "", "", podVolumes, fm)
+		_, _, err := makeMounts(&pod, "/pod", &test.container, "fakepodname", "", "", podVolumes, fm, nil)
 		if err != nil && !test.expectError {
 			t.Errorf("test %v failed: %v", name, err)
 		}
@@ -995,7 +996,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_NAME",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "metadata.name",
 							},
 						},
@@ -1004,7 +1005,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_NAMESPACE",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "metadata.namespace",
 							},
 						},
@@ -1013,7 +1014,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_NODE_NAME",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "spec.nodeName",
 							},
 						},
@@ -1022,7 +1023,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_SERVICE_ACCOUNT_NAME",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "spec.serviceAccountName",
 							},
 						},
@@ -1031,7 +1032,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_IP",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "status.podIP",
 							},
 						},
@@ -1040,7 +1041,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "HOST_IP",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "status.hostIP",
 							},
 						},
@@ -1071,7 +1072,7 @@ func TestMakeEnvironmentVariables(t *testing.T) {
 						Name: "POD_NAME",
 						ValueFrom: &v1.EnvVarSource{
 							FieldRef: &v1.ObjectFieldSelector{
-								APIVersion: legacyscheme.Registry.GroupOrDie(v1.GroupName).GroupVersion.String(),
+								APIVersion: "v1",
 								FieldPath:  "metadata.name",
 							},
 						},
@@ -2093,7 +2094,7 @@ func (f *fakeReadWriteCloser) Close() error {
 	return nil
 }
 
-func TestExec(t *testing.T) {
+func TestGetExec(t *testing.T) {
 	const (
 		podName                = "podFoo"
 		podNamespace           = "nsFoo"
@@ -2104,9 +2105,6 @@ func TestExec(t *testing.T) {
 	var (
 		podFullName = kubecontainer.GetPodFullName(podWithUIDNameNs(podUID, podName, podNamespace))
 		command     = []string{"ls"}
-		stdin       = &bytes.Buffer{}
-		stdout      = &fakeReadWriteCloser{}
-		stderr      = &fakeReadWriteCloser{}
 	)
 
 	testcases := []struct {
@@ -2147,65 +2145,27 @@ func TestExec(t *testing.T) {
 			}},
 		}
 
-		{ // No streaming case
-			description := "no streaming - " + tc.description
-			redirect, err := kubelet.GetExec(tc.podFullName, podUID, tc.container, command, remotecommand.Options{})
-			assert.Error(t, err, description)
-			assert.Nil(t, redirect, description)
+		description := "streaming - " + tc.description
+		fakeRuntime := &containertest.FakeStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
+		kubelet.containerRuntime = fakeRuntime
+		kubelet.streamingRuntime = fakeRuntime
 
-			err = kubelet.ExecInContainer(tc.podFullName, podUID, tc.container, command, stdin, stdout, stderr, tty, nil, 0)
+		redirect, err := kubelet.GetExec(tc.podFullName, podUID, tc.container, command, remotecommand.Options{})
+		if tc.expectError {
 			assert.Error(t, err, description)
-		}
-		{ // Direct streaming case
-			description := "direct streaming - " + tc.description
-			fakeRuntime := &containertest.FakeDirectStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
-			kubelet.containerRuntime = fakeRuntime
-
-			redirect, err := kubelet.GetExec(tc.podFullName, podUID, tc.container, command, remotecommand.Options{})
+		} else {
 			assert.NoError(t, err, description)
-			assert.Nil(t, redirect, description)
-
-			err = kubelet.ExecInContainer(tc.podFullName, podUID, tc.container, command, stdin, stdout, stderr, tty, nil, 0)
-			if tc.expectError {
-				assert.Error(t, err, description)
-			} else {
-				assert.NoError(t, err, description)
-				assert.Equal(t, fakeRuntime.Args.ContainerID.ID, containerID, description+": ID")
-				assert.Equal(t, fakeRuntime.Args.Cmd, command, description+": Command")
-				assert.Equal(t, fakeRuntime.Args.Stdin, stdin, description+": Stdin")
-				assert.Equal(t, fakeRuntime.Args.Stdout, stdout, description+": Stdout")
-				assert.Equal(t, fakeRuntime.Args.Stderr, stderr, description+": Stderr")
-				assert.Equal(t, fakeRuntime.Args.TTY, tty, description+": TTY")
-			}
-		}
-		{ // Indirect streaming case
-			description := "indirect streaming - " + tc.description
-			fakeRuntime := &containertest.FakeIndirectStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
-			kubelet.containerRuntime = fakeRuntime
-
-			redirect, err := kubelet.GetExec(tc.podFullName, podUID, tc.container, command, remotecommand.Options{})
-			if tc.expectError {
-				assert.Error(t, err, description)
-			} else {
-				assert.NoError(t, err, description)
-				assert.Equal(t, containertest.FakeHost, redirect.Host, description+": redirect")
-			}
-
-			err = kubelet.ExecInContainer(tc.podFullName, podUID, tc.container, command, stdin, stdout, stderr, tty, nil, 0)
-			assert.Error(t, err, description)
+			assert.Equal(t, containertest.FakeHost, redirect.Host, description+": redirect")
 		}
 	}
 }
 
-func TestPortForward(t *testing.T) {
+func TestGetPortForward(t *testing.T) {
 	const (
 		podName                = "podFoo"
 		podNamespace           = "nsFoo"
 		podUID       types.UID = "12345678"
 		port         int32     = 5000
-	)
-	var (
-		stream = &fakeReadWriteCloser{}
 	)
 
 	testcases := []struct {
@@ -2238,50 +2198,17 @@ func TestPortForward(t *testing.T) {
 			}},
 		}
 
-		podFullName := kubecontainer.GetPodFullName(podWithUIDNameNs(podUID, tc.podName, podNamespace))
-		{ // No streaming case
-			description := "no streaming - " + tc.description
-			redirect, err := kubelet.GetPortForward(tc.podName, podNamespace, podUID, portforward.V4Options{})
-			assert.Error(t, err, description)
-			assert.Nil(t, redirect, description)
+		description := "streaming - " + tc.description
+		fakeRuntime := &containertest.FakeStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
+		kubelet.containerRuntime = fakeRuntime
+		kubelet.streamingRuntime = fakeRuntime
 
-			err = kubelet.PortForward(podFullName, podUID, port, stream)
+		redirect, err := kubelet.GetPortForward(tc.podName, podNamespace, podUID, portforward.V4Options{})
+		if tc.expectError {
 			assert.Error(t, err, description)
-		}
-		{ // Direct streaming case
-			description := "direct streaming - " + tc.description
-			fakeRuntime := &containertest.FakeDirectStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
-			kubelet.containerRuntime = fakeRuntime
-
-			redirect, err := kubelet.GetPortForward(tc.podName, podNamespace, podUID, portforward.V4Options{})
+		} else {
 			assert.NoError(t, err, description)
-			assert.Nil(t, redirect, description)
-
-			err = kubelet.PortForward(podFullName, podUID, port, stream)
-			if tc.expectError {
-				assert.Error(t, err, description)
-			} else {
-				assert.NoError(t, err, description)
-				require.Equal(t, fakeRuntime.Args.Pod.ID, podUID, description+": Pod UID")
-				require.Equal(t, fakeRuntime.Args.Port, port, description+": Port")
-				require.Equal(t, fakeRuntime.Args.Stream, stream, description+": stream")
-			}
-		}
-		{ // Indirect streaming case
-			description := "indirect streaming - " + tc.description
-			fakeRuntime := &containertest.FakeIndirectStreamingRuntime{FakeRuntime: testKubelet.fakeRuntime}
-			kubelet.containerRuntime = fakeRuntime
-
-			redirect, err := kubelet.GetPortForward(tc.podName, podNamespace, podUID, portforward.V4Options{})
-			if tc.expectError {
-				assert.Error(t, err, description)
-			} else {
-				assert.NoError(t, err, description)
-				assert.Equal(t, containertest.FakeHost, redirect.Host, description+": redirect")
-			}
-
-			err = kubelet.PortForward(podFullName, podUID, port, stream)
-			assert.Error(t, err, description)
+			assert.Equal(t, containertest.FakeHost, redirect.Host, description+": redirect")
 		}
 	}
 }

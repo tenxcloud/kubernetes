@@ -17,9 +17,9 @@ limitations under the License.
 package cmd
 
 import (
-	"bytes"
 	"testing"
 
+	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdtesting "k8s.io/kubernetes/pkg/kubectl/cmd/testing"
 )
 
@@ -74,8 +74,7 @@ func TestValidateArgs(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		out := &bytes.Buffer{}
-		cmd := NewCmdRollingUpdate(f, out)
+		cmd := NewCmdRollingUpdate(f, genericclioptions.NewTestIOStreamsDiscard())
 
 		if test.flags != nil {
 			for key, val := range test.flags {

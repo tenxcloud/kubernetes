@@ -1,18 +1,4 @@
-package(default_visibility = ["//visibility:public"])
-
-licenses(["notice"])
-
-load(
-    "@io_bazel_rules_go//go:def.bzl",
-    "go_binary",
-    "go_library",
-)
-
-go_binary(
-    name = "kazel",
-    embed = [":go_default_library"],
-    tags = ["automanaged"],
-)
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "go_default_library",
@@ -23,12 +9,19 @@ go_library(
         "kazel.go",
         "sourcerer.go",
     ],
+    importmap = "k8s.io/kubernetes/vendor/github.com/kubernetes/repo-infra/kazel",
     importpath = "github.com/kubernetes/repo-infra/kazel",
-    tags = ["automanaged"],
+    visibility = ["//visibility:private"],
     deps = [
         "//vendor/github.com/bazelbuild/buildtools/build:go_default_library",
         "//vendor/github.com/golang/glog:go_default_library",
     ],
+)
+
+go_binary(
+    name = "kazel",
+    embed = [":go_default_library"],
+    visibility = ["//visibility:public"],
 )
 
 filegroup(

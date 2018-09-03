@@ -93,6 +93,19 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			c.Fuzz(&j.ObjectMeta)
 			j.Target.Name = c.RandString()
 		},
+		func(j *core.ReplicationController, c fuzz.Continue) {
+			c.FuzzNoCustom(j)
+
+			// match defaulting
+			if j.Spec.Template != nil {
+				if len(j.Labels) == 0 {
+					j.Labels = j.Spec.Template.Labels
+				}
+				if len(j.Spec.Selector) == 0 {
+					j.Spec.Selector = j.Spec.Template.Labels
+				}
+			}
+		},
 		func(j *core.ReplicationControllerSpec, c fuzz.Continue) {
 			c.FuzzNoCustom(j) // fuzz self without calling this function again
 			//j.TemplateRef = nil // this is required for round trip
@@ -250,7 +263,7 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			*d = policies[c.Rand.Intn(len(policies))]
 		},
 		func(p *core.Protocol, c fuzz.Continue) {
-			protocols := []core.Protocol{core.ProtocolTCP, core.ProtocolUDP}
+			protocols := []core.Protocol{core.ProtocolTCP, core.ProtocolUDP, core.ProtocolSCTP}
 			*p = protocols[c.Rand.Intn(len(protocols))]
 		},
 		func(p *core.ServiceAffinity, c fuzz.Continue) {
@@ -468,10 +481,6 @@ var Funcs = func(codecs runtimeserializer.CodecFactory) []interface{} {
 			case core.ServiceAffinityNone:
 				ss.SessionAffinityConfig = nil
 			}
-		},
-		func(n *core.Node, c fuzz.Continue) {
-			c.FuzzNoCustom(n)
-			n.Spec.ExternalID = "external"
 		},
 		func(s *core.NodeStatus, c fuzz.Continue) {
 			c.FuzzNoCustom(s)

@@ -29,20 +29,18 @@ import (
 	certutil "k8s.io/client-go/util/cert"
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	kubeadmutil "k8s.io/kubernetes/cmd/kubeadm/app/util"
 	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
 )
 
 // NewCertificateAuthority creates new certificate and private key for the certificate authority
-func NewCertificateAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
+func NewCertificateAuthority(config *certutil.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
 	key, err := certutil.NewPrivateKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create private key [%v]", err)
 	}
 
-	config := certutil.Config{
-		CommonName: "kubernetes",
-	}
-	cert, err := certutil.NewSelfSignedCACert(config, key)
+	cert, err := certutil.NewSelfSignedCACert(*config, key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create self-signed certificate [%v]", err)
 	}
@@ -51,13 +49,13 @@ func NewCertificateAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
 }
 
 // NewCertAndKey creates new certificate and key by passing the certificate authority certificate and key
-func NewCertAndKey(caCert *x509.Certificate, caKey *rsa.PrivateKey, config certutil.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
+func NewCertAndKey(caCert *x509.Certificate, caKey *rsa.PrivateKey, config *certutil.Config) (*x509.Certificate, *rsa.PrivateKey, error) {
 	key, err := certutil.NewPrivateKey()
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to create private key [%v]", err)
 	}
 
-	cert, err := certutil.NewSignedCert(config, key, caCert, caKey)
+	cert, err := certutil.NewSignedCert(*config, key, caCert, caKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to sign certificate [%v]", err)
 	}
@@ -132,7 +130,7 @@ func WritePublicKey(pkiPath, name string, key *rsa.PublicKey) error {
 
 // CertOrKeyExist returns a boolean whether the cert or the key exists
 func CertOrKeyExist(pkiPath, name string) bool {
-	certificatePath, privateKeyPath := pathsForCertAndKey(pkiPath, name)
+	certificatePath, privateKeyPath := PathsForCertAndKey(pkiPath, name)
 
 	_, certErr := os.Stat(certificatePath)
 	_, keyErr := os.Stat(privateKeyPath)
@@ -236,7 +234,8 @@ func TryLoadPrivatePublicKeyFromDisk(pkiPath, name string) (*rsa.PrivateKey, *rs
 	return k, p, nil
 }
 
-func pathsForCertAndKey(pkiPath, name string) (string, string) {
+// PathsForCertAndKey returns the paths for the certificate and key given the path and basename.
+func PathsForCertAndKey(pkiPath, name string) (string, string) {
 	return pathForCert(pkiPath, name), pathForKey(pkiPath, name)
 }
 
@@ -253,11 +252,11 @@ func pathForPublicKey(pkiPath, name string) string {
 }
 
 // GetAPIServerAltNames builds an AltNames object for to be used when generating apiserver certificate
-func GetAPIServerAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNames, error) {
+func GetAPIServerAltNames(cfg *kubeadmapi.InitConfiguration) (*certutil.AltNames, error) {
 	// advertise address
-	advertiseAddress := net.ParseIP(cfg.API.AdvertiseAddress)
+	advertiseAddress := net.ParseIP(cfg.APIEndpoint.AdvertiseAddress)
 	if advertiseAddress == nil {
-		return nil, fmt.Errorf("error parsing API AdvertiseAddress %v: is not a valid textual representation of an IP address", cfg.API.AdvertiseAddress)
+		return nil, fmt.Errorf("error parsing APIEndpoint AdvertiseAddress %v: is not a valid textual representation of an IP address", cfg.APIEndpoint.AdvertiseAddress)
 	}
 
 	// internal IP address for the API server
@@ -274,7 +273,7 @@ func GetAPIServerAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNam
 	// create AltNames with defaults DNSNames/IPs
 	altNames := &certutil.AltNames{
 		DNSNames: []string{
-			cfg.NodeName,
+			cfg.NodeRegistration.Name,
 			"kubernetes",
 			"kubernetes.default",
 			"kubernetes.default.svc",
@@ -286,9 +285,17 @@ func GetAPIServerAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNam
 		},
 	}
 
-	// add api server dns advertise address
-	if len(cfg.API.ControlPlaneEndpoint) > 0 {
-		altNames.DNSNames = append(altNames.DNSNames, cfg.API.ControlPlaneEndpoint)
+	// add cluster controlPlaneEndpoint if present (dns or ip)
+	if len(cfg.ControlPlaneEndpoint) > 0 {
+		if host, _, err := kubeadmutil.ParseHostPort(cfg.ControlPlaneEndpoint); err == nil {
+			if ip := net.ParseIP(host); ip != nil {
+				altNames.IPs = append(altNames.IPs, ip)
+			} else {
+				altNames.DNSNames = append(altNames.DNSNames, host)
+			}
+		} else {
+			return nil, fmt.Errorf("error parsing cluster controlPlaneEndpoint %q: %s", cfg.ControlPlaneEndpoint, err)
+		}
 	}
 
 	appendSANsToAltNames(altNames, cfg.APIServerCertSANs, kubeadmconstants.APIServerCertName)
@@ -300,14 +307,16 @@ func GetAPIServerAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNam
 // `localhost` is included in the SAN since this is the interface the etcd static pod listens on.
 // Hostname and `API.AdvertiseAddress` are excluded since etcd does not listen on this interface by default.
 // The user can override the listen address with `Etcd.ExtraArgs` and add SANs with `Etcd.ServerCertSANs`.
-func GetEtcdAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNames, error) {
+func GetEtcdAltNames(cfg *kubeadmapi.InitConfiguration) (*certutil.AltNames, error) {
 	// create AltNames with defaults DNSNames/IPs
 	altNames := &certutil.AltNames{
-		DNSNames: []string{"localhost"},
-		IPs:      []net.IP{net.IPv4(127, 0, 0, 1)},
+		DNSNames: []string{cfg.NodeRegistration.Name, "localhost"},
+		IPs:      []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 	}
 
-	appendSANsToAltNames(altNames, cfg.Etcd.ServerCertSANs, kubeadmconstants.EtcdServerCertName)
+	if cfg.Etcd.Local != nil {
+		appendSANsToAltNames(altNames, cfg.Etcd.Local.ServerCertSANs, kubeadmconstants.EtcdServerCertName)
+	}
 
 	return altNames, nil
 }
@@ -316,20 +325,22 @@ func GetEtcdAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNames, e
 // `localhost` is excluded from the SAN since etcd will not refer to itself as a peer.
 // Hostname and `API.AdvertiseAddress` are included if the user chooses to promote the single node etcd cluster into a multi-node one.
 // The user can override the listen address with `Etcd.ExtraArgs` and add SANs with `Etcd.PeerCertSANs`.
-func GetEtcdPeerAltNames(cfg *kubeadmapi.MasterConfiguration) (*certutil.AltNames, error) {
+func GetEtcdPeerAltNames(cfg *kubeadmapi.InitConfiguration) (*certutil.AltNames, error) {
 	// advertise address
-	advertiseAddress := net.ParseIP(cfg.API.AdvertiseAddress)
+	advertiseAddress := net.ParseIP(cfg.APIEndpoint.AdvertiseAddress)
 	if advertiseAddress == nil {
-		return nil, fmt.Errorf("error parsing API AdvertiseAddress %v: is not a valid textual representation of an IP address", cfg.API.AdvertiseAddress)
+		return nil, fmt.Errorf("error parsing APIEndpoint AdvertiseAddress %v: is not a valid textual representation of an IP address", cfg.APIEndpoint.AdvertiseAddress)
 	}
 
 	// create AltNames with defaults DNSNames/IPs
 	altNames := &certutil.AltNames{
-		DNSNames: []string{cfg.NodeName},
-		IPs:      []net.IP{advertiseAddress},
+		DNSNames: []string{cfg.NodeRegistration.Name, "localhost"},
+		IPs:      []net.IP{advertiseAddress, net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 	}
 
-	appendSANsToAltNames(altNames, cfg.Etcd.PeerCertSANs, kubeadmconstants.EtcdPeerCertName)
+	if cfg.Etcd.Local != nil {
+		appendSANsToAltNames(altNames, cfg.Etcd.Local.PeerCertSANs, kubeadmconstants.EtcdPeerCertName)
+	}
 
 	return altNames, nil
 }

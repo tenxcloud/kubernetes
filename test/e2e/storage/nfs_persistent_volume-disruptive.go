@@ -31,7 +31,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/storage/utils"
 )
 
-type testBody func(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod, pvc *v1.PersistentVolumeClaim)
+type testBody func(c clientset.Interface, f *framework.Framework, clientPod *v1.Pod)
 type disruptiveTest struct {
 	testItStmt string
 	runTest    testBody
@@ -84,13 +84,15 @@ var _ = utils.SIGDescribe("NFSPersistentVolumes[Disruptive][Flaky]", func() {
 			StorageClassName: &emptyStorageClass,
 		}
 		// Get the first ready node IP that is not hosting the NFS pod.
+		var err error
 		if clientNodeIP == "" {
 			framework.Logf("Designating test node")
 			nodes := framework.GetReadySchedulableNodesOrDie(c)
 			for _, node := range nodes.Items {
 				if node.Name != nfsServerPod.Spec.NodeName {
 					clientNode = &node
-					clientNodeIP = framework.GetNodeExternalIP(clientNode)
+					clientNodeIP, err = framework.GetNodeExternalIP(clientNode)
+					framework.ExpectNoError(err)
 					break
 				}
 			}
@@ -233,7 +235,7 @@ var _ = utils.SIGDescribe("NFSPersistentVolumes[Disruptive][Flaky]", func() {
 			func(t disruptiveTest) {
 				It(t.testItStmt, func() {
 					By("Executing Spec")
-					t.runTest(c, f, clientPod, pvc)
+					t.runTest(c, f, clientPod)
 				})
 			}(test)
 		}

@@ -43,6 +43,9 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework/metrics"
 	"k8s.io/kubernetes/test/e2e/manifest"
 	testutils "k8s.io/kubernetes/test/utils"
+
+	// ensure auth plugins are loaded
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 )
 
 var (
@@ -72,10 +75,6 @@ func setupProviderConfig() error {
 			managedZones = []string{zone}
 		}
 
-		gceAlphaFeatureGate := gcecloud.NewAlphaFeatureGate([]string{
-			gcecloud.AlphaFeatureNetworkEndpointGroup,
-		})
-
 		gceCloud, err := gcecloud.CreateGCECloud(&gcecloud.CloudConfig{
 			ApiEndpoint:        framework.TestContext.CloudConfig.ApiEndpoint,
 			ProjectID:          framework.TestContext.CloudConfig.ProjectID,
@@ -88,7 +87,8 @@ func setupProviderConfig() error {
 			NodeInstancePrefix: "",
 			TokenSource:        nil,
 			UseMetadataServer:  false,
-			AlphaFeatureGate:   gceAlphaFeatureGate})
+			AlphaFeatureGate:   gcecloud.NewAlphaFeatureGate([]string{}),
+		})
 
 		if err != nil {
 			return fmt.Errorf("Error building GCE/GKE provider: %v", err)
@@ -188,6 +188,10 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		framework.LogFailedContainers(c, metav1.NamespaceSystem, framework.Logf)
 		runKubernetesServiceTestContainer(c, metav1.NamespaceDefault)
 		framework.Failf("Error waiting for all pods to be running and ready: %v", err)
+	}
+
+	if err := framework.WaitForDaemonSets(c, metav1.NamespaceSystem, int32(framework.TestContext.AllowedNotReadyNodes), framework.TestContext.SystemDaemonsetStartupTimeout); err != nil {
+		framework.Logf("WARNING: Waiting for all daemonsets to be ready failed: %v", err)
 	}
 
 	if err := framework.WaitForPodsSuccess(c, metav1.NamespaceSystem, framework.ImagePullerLabels, framework.ImagePrePullingTimeout); err != nil {

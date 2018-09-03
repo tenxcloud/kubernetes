@@ -912,9 +912,17 @@ func (c *Cloud) ensureLoadBalancer(namespacedName types.NamespacedName, loadBala
 
 		// We are supposed to specify one subnet per AZ.
 		// TODO: What happens if we have more than one subnet per AZ?
-		createRequest.Subnets = stringPointerArray(subnetIDs)
+		if subnetIDs == nil {
+			createRequest.Subnets = nil
+		} else {
+			createRequest.Subnets = aws.StringSlice(subnetIDs)
+		}
 
-		createRequest.SecurityGroups = stringPointerArray(securityGroupIDs)
+		if securityGroupIDs == nil {
+			createRequest.SecurityGroups = nil
+		} else {
+			createRequest.SecurityGroups = aws.StringSlice(securityGroupIDs)
+		}
 
 		// Get additional tags set by the user
 		tags := getLoadBalancerAdditionalTags(annotations)
@@ -996,7 +1004,11 @@ func (c *Cloud) ensureLoadBalancer(namespacedName types.NamespacedName, loadBala
 				// This call just replaces the security groups, unlike e.g. subnets (!)
 				request := &elb.ApplySecurityGroupsToLoadBalancerInput{}
 				request.LoadBalancerName = aws.String(loadBalancerName)
-				request.SecurityGroups = stringPointerArray(securityGroupIDs)
+				if securityGroupIDs == nil {
+					request.SecurityGroups = nil
+				} else {
+					request.SecurityGroups = aws.StringSlice(securityGroupIDs)
+				}
 				glog.V(2).Info("Applying updated security groups to load balancer")
 				_, err := c.elb.ApplySecurityGroupsToLoadBalancer(request)
 				if err != nil {
@@ -1027,10 +1039,10 @@ func (c *Cloud) ensureLoadBalancer(namespacedName types.NamespacedName, loadBala
 					if elbProtocolsAreEqual(actual.InstanceProtocol, expected.InstanceProtocol) {
 						continue
 					}
-					if orZero(actual.InstancePort) != orZero(expected.InstancePort) {
+					if aws.Int64Value(actual.InstancePort) != aws.Int64Value(expected.InstancePort) {
 						continue
 					}
-					if orZero(actual.LoadBalancerPort) != orZero(expected.LoadBalancerPort) {
+					if aws.Int64Value(actual.LoadBalancerPort) != aws.Int64Value(expected.LoadBalancerPort) {
 						continue
 					}
 					if awsArnEquals(actual.SSLCertificateId, expected.SSLCertificateId) {
@@ -1375,8 +1387,7 @@ func (c *Cloud) ensureSSLNegotiationPolicy(loadBalancer *elb.LoadBalancerDescrip
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
-			case "PolicyNotFound":
-				// TODO change from string to `elb.ErrCodePolicyNotFoundException` once the AWS SDK is updated
+			case elb.ErrCodePolicyNotFoundException:
 			default:
 				return fmt.Errorf("error describing security policies on load balancer: %q", err)
 			}

@@ -348,7 +348,7 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 		timeToWait := 5 * time.Minute
 		podsConfig := reserveMemoryRCConfig(f, "unschedulable-pod", unschedulablePodReplicas, totalMemReservation, timeToWait)
 		framework.RunRC(*podsConfig) // Ignore error (it will occur because pods are unschedulable)
-		defer framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.ScalesGetter, f.Namespace.Name, podsConfig.Name)
+		defer framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, podsConfig.Name)
 
 		// Ensure that no new nodes have been added so far.
 		Expect(framework.NumberOfReadyNodes(f.ClientSet)).To(Equal(nodeCount))
@@ -367,26 +367,6 @@ var _ = framework.KubeDescribe("Cluster size autoscaler scalability [Slow]", fun
 	})
 
 })
-
-func makeUnschedulable(f *framework.Framework, nodes []v1.Node) error {
-	for _, node := range nodes {
-		err := makeNodeUnschedulable(f.ClientSet, &node)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func makeSchedulable(f *framework.Framework, nodes []v1.Node) error {
-	for _, node := range nodes {
-		err := makeNodeSchedulable(f.ClientSet, &node, false)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 func anyKey(input map[string]int) string {
 	for k := range input {
@@ -418,7 +398,7 @@ func simpleScaleUpTestWithTolerance(f *framework.Framework, config *scaleUpTestC
 	}
 	timeTrack(start, fmt.Sprintf("Scale up to %v", config.expectedResult.nodes))
 	return func() error {
-		return framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.ScalesGetter, f.Namespace.Name, config.extraPods.Name)
+		return framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, config.extraPods.Name)
 	}
 }
 
@@ -501,7 +481,7 @@ func createHostPortPodsWithMemory(f *framework.Framework, id string, replicas, p
 	err := framework.RunRC(*config)
 	framework.ExpectNoError(err)
 	return func() error {
-		return framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.ScalesGetter, f.Namespace.Name, id)
+		return framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, id)
 	}
 }
 
@@ -541,7 +521,7 @@ func distributeLoad(f *framework.Framework, namespace string, id string, podDist
 	framework.ExpectNoError(framework.RunRC(*rcConfig))
 	framework.ExpectNoError(waitForAllCaPodsReadyInNamespace(f, f.ClientSet))
 	return func() error {
-		return framework.DeleteRCAndPods(f.ClientSet, f.InternalClientset, f.ScalesGetter, f.Namespace.Name, id)
+		return framework.DeleteRCAndWaitForGC(f.ClientSet, f.Namespace.Name, id)
 	}
 }
 

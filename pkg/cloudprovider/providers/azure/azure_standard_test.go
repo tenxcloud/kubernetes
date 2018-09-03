@@ -158,34 +158,6 @@ func TestMapLoadBalancerNameToVMSet(t *testing.T) {
 			clusterName:   "azure",
 			expectedVMSet: "azuretest",
 		},
-		{
-			description:   "default standard external LB should map to empty string",
-			lbName:        "azure",
-			useStandardLB: true,
-			clusterName:   "azure",
-			expectedVMSet: "",
-		},
-		{
-			description:   "default standard internal LB should map to empty string",
-			lbName:        "azure-internal",
-			useStandardLB: true,
-			clusterName:   "azure",
-			expectedVMSet: "",
-		},
-		{
-			description:   "non-default standard external LB should map to empty string",
-			lbName:        "azuretest",
-			useStandardLB: true,
-			clusterName:   "azure",
-			expectedVMSet: "",
-		},
-		{
-			description:   "non-default standard internal LB should map to empty string",
-			lbName:        "azuretest-internal",
-			useStandardLB: true,
-			clusterName:   "azure",
-			expectedVMSet: "",
-		},
 	}
 
 	for _, c := range cases {
@@ -199,7 +171,7 @@ func TestMapLoadBalancerNameToVMSet(t *testing.T) {
 	}
 }
 
-func TestGetLoadBalancerName(t *testing.T) {
+func TestGetAzureLoadBalancerName(t *testing.T) {
 	az := getTestCloud()
 	az.PrimaryAvailabilitySetName = "primary"
 
@@ -275,7 +247,7 @@ func TestGetLoadBalancerName(t *testing.T) {
 		} else {
 			az.Config.LoadBalancerSku = loadBalancerSkuBasic
 		}
-		loadbalancerName := az.getLoadBalancerName(c.clusterName, c.vmSet, c.isInternal)
+		loadbalancerName := az.getAzureLoadBalancerName(c.clusterName, c.vmSet, c.isInternal)
 		assert.Equal(t, c.expected, loadbalancerName, c.description)
 	}
 }
